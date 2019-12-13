@@ -2,7 +2,7 @@
 
 Small application that allows unpack (decrypt) Wii U NUS Content.
 
-This is a fork of a fork made by neobrain of the abandoned CDecrypt originally made for crediting.
+This is a fork of a fork made by neobrain of the abandoned CDecrypt originally made for crediar.
 
 Internally it works almost the same as version 2.0b but it differs in two aspects:
 
