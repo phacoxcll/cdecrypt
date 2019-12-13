@@ -30,6 +30,18 @@
 	file named "keys.txt" where the first line must be	the Wii U Common Key
 	and optionally the second line must be the Wii U Common Dev Key.
 */
+/*
+	CDecrypt v2.2b
+
+	Differences with respect to v2.1b:
+
+	- Now lets unpack (decrypt) a specific file, requires the path to the
+	NUS Content to decrypt <input path>, the relative path with the name of
+	the file to decrypt <file to decrypt> and the path where you will place
+	the decrypted file <output filename>.
+
+	- Some performance improvements and minor changes.
+*/
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -44,6 +56,7 @@
 #include <vector>
 #include <direct.h>
 #include <ctype.h>
+#include <locale.h>
 
 #pragma comment(lib,"libeay32.lib")
 
@@ -81,9 +94,6 @@ u64 H0Fail = 0;
 #define MAXLEN 1024
 #define BLOCK_SIZE_HASH 0x10000 //Data block size for extracting file by hash
 #define BLOCK_SIZE_FILE 0x8000  //Data block size for extracting file
-
-char* InputPath;
-char* OutputPath;
 
 #pragma pack(1)
 
@@ -410,58 +420,31 @@ s32 LoadWiiUCommonKeys()
 	return EXIT_SUCCESS;
 }
 
-s32 SetPaths(char* inputPath, char* outputPath)
+s32 SetValidPath(const char* path, char* validPath)
 {
-	u16 inPathLen = strlen(inputPath);
-	u16 outPathLen = strlen(outputPath);
+	u16 pathLen = strlen(path);
 
-	if (inPathLen + 1 > MAXLEN - 12)
+	if (pathLen + 1 > MAXLEN - 128)
 	{
-		printf("The input path is too long.\n");
-		return EXIT_FAILURE;
-	}
-
-	if (outPathLen + 1 > MAXLEN - 128)
-	{
-		printf("The output path is too long.\n");
+		printf("The \"%s\" path is too long.\n", path);
 		return EXIT_FAILURE;
 	}
 
 	struct stat info;
-	if (stat(inputPath, &info) != 0 || (info.st_mode & S_IFDIR) != S_IFDIR)
+	if (stat(path, &info) != 0 || (info.st_mode & S_IFDIR) != S_IFDIR)
 	{
-		printf("The input folder not exist.\n");
+		printf("The \"%s\" path not exist.\n", path);
 		return EXIT_FAILURE;
 	}
 
-	if (stat(outputPath, &info) != 0 || (info.st_mode & S_IFDIR) != S_IFDIR)
+	if (path[pathLen - 1] == '\\')
 	{
-		printf("The output folder not exist.\n");
-		return EXIT_FAILURE;
-	}
-
-	if (inputPath[inPathLen - 1] == '\\')
-	{
-		InputPath = new char[inPathLen];
-		strcpy(inputPath, inputPath);
+		strcpy(validPath, path);
 	}
 	else
 	{
-		InputPath = new char[inPathLen + 1];
-		strcpy(InputPath, inputPath);
-		strcat(InputPath, "\\");
-	}
-
-	if (outputPath[outPathLen - 1] == '\\')
-	{
-		OutputPath = new char[outPathLen];
-		strcpy(OutputPath, outputPath);
-	}
-	else
-	{
-		OutputPath = new char[outPathLen + 1];
-		strcpy(OutputPath, outputPath);
-		strcat(OutputPath, "\\");
+		strcpy(validPath, path);
+		strcat(validPath, "\\");
 	}
 
 	return EXIT_SUCCESS;
@@ -608,23 +591,51 @@ void ExtractFile(FILE* in, u64 PartDataOffset, u64 FileOffset, u64 Size, char* F
 
 s32 main(s32 argc, char* argv[])
 {
-	printf("CDecrypt v2.1b by crediar, phacox.cll\n");
+	printf("CDecrypt v2.2b by crediar, phacox.cll\n");
 	printf("Built: %s %s\n", __TIME__, __DATE__);
 
-	if (argc != 3)
+	if (argc != 3 && argc != 4)
 	{
 		printf("Use: CDecrypt <input path> <output path>\n");
+		printf("Or:  CDecrypt <input path> <file to decrypt> <output filename>\n");
 		return EXIT_SUCCESS;
 	}
 
 	if (LoadWiiUCommonKeys())
 		return EXIT_FAILURE;
 
-	if (SetPaths(argv[1], argv[2]))
+	char inputPath[MAXLEN];
+	char outputPath[MAXLEN];
+	char fileToDecrypt[MAXLEN];
+
+	if (SetValidPath(argv[1], inputPath))
 		return EXIT_FAILURE;
 
+	if (argc == 3)
+	{
+		if (SetValidPath(argv[2], outputPath))
+			return EXIT_FAILURE;
+		fileToDecrypt[0] = 0;
+	}
+	else //if (argc == 4)
+	{
+		if (strlen(argv[2]) > MAXLEN)
+		{
+			printf("The string \"%s\" is too long.\n", argv[2]);
+			return EXIT_FAILURE;
+		}
+		strcpy(fileToDecrypt, argv[2]);
+
+		if (strlen(argv[3]) > MAXLEN)
+		{
+			printf("The \"%s\" path is too long.\n", argv[3]);
+			return EXIT_FAILURE;
+		}
+		strcpy(outputPath, argv[3]);
+	}
+
 	char tmdPath[MAXLEN];
-	strcpy(tmdPath, InputPath);
+	strcpy(tmdPath, inputPath);
 	strcat(tmdPath, "title.tmd");
 	u32 TMDLen;
 	char* TMD = ReadFile(tmdPath, &TMDLen);
@@ -635,7 +646,7 @@ s32 main(s32 argc, char* argv[])
 	}
 
 	char tikPath[MAXLEN];
-	strcpy(tikPath, InputPath);
+	strcpy(tikPath, inputPath);
 	strcat(tikPath, "title.tik");
 	u32 TIKLen;
 	char* TIK = ReadFile(tikPath, &TIKLen);
@@ -692,7 +703,7 @@ s32 main(s32 argc, char* argv[])
 	char sourcePath[MAXLEN];
 	char sourceFile[MAXLEN];
 	sprintf(sourceFile, "%08X.app", bs32(tmd->Contents[0].ID));
-	strcpy(sourcePath, InputPath);
+	strcpy(sourcePath, inputPath);
 	strcat(sourcePath, sourceFile);
 
 	u32 CNTLen;
@@ -700,8 +711,8 @@ s32 main(s32 argc, char* argv[])
 	if (CNT == (char*)NULL)
 	{
 		sprintf(sourceFile, "%08X", bs32(tmd->Contents[0].ID));
-		memset(sourcePath, 0, MAXLEN);
-		strcpy(sourcePath, InputPath);
+		//memset(sourcePath, 0, MAXLEN);
+		strcpy(sourcePath, inputPath);
 		strcat(sourcePath, sourceFile);
 		CNT = ReadFile(sourcePath, &CNTLen);
 		if (CNT == (char*)NULL)
@@ -741,6 +752,7 @@ s32 main(s32 argc, char* argv[])
 
 	printf("FST entries: %u\n", Entries);
 
+	char relativePath[MAXLEN];
 	char destPath[MAXLEN];
 	s32 Entry[16];
 	s32 LEntry[16];
@@ -768,56 +780,69 @@ s32 main(s32 argc, char* argv[])
 		}
 		else
 		{
-			memset(destPath, 0, MAXLEN);
-			strcpy(destPath, OutputPath);
+			memset(relativePath, 0, MAXLEN);
 
 			for (s32 j = 0; j < level; ++j)
 			{
 				if (j)
-					destPath[strlen(destPath)] = '\\';
-				memcpy(destPath + strlen(destPath), CNT + NameOff + bs24(fe[Entry[j]].NameOffset), strlen(CNT + NameOff + bs24(fe[Entry[j]].NameOffset)));
-				_mkdir(destPath);
+					relativePath[strlen(relativePath)] = '\\';
+				memcpy(relativePath + strlen(relativePath), CNT + NameOff + bs24(fe[Entry[j]].NameOffset), strlen(CNT + NameOff + bs24(fe[Entry[j]].NameOffset)));
+				if (argc == 3)
+				{
+					//memset(destPath, 0, MAXLEN);
+					strcpy(destPath, outputPath);
+					strcat(destPath, relativePath);
+					_mkdir(destPath);
+				}
 			}
 			if (level)
-				destPath[strlen(destPath)] = '\\';
-			memcpy(destPath + strlen(destPath), CNT + NameOff + bs24(fe[i].NameOffset), strlen(CNT + NameOff + bs24(fe[i].NameOffset)));
+				relativePath[strlen(relativePath)] = '\\';
+			memcpy(relativePath + strlen(relativePath), CNT + NameOff + bs24(fe[i].NameOffset), strlen(CNT + NameOff + bs24(fe[i].NameOffset)));
 
-			u32 CNTSize = bs32(fe[i].FileLength);
-			u64 CNTOff = ((u64)bs32(fe[i].FileOffset));
-
-			if ((bs16(fe[i].Flags) & 4) == 0)
-				CNTOff <<= 5;
-
-			printf("Size:%07X Offset:%010llX CID:%02X U:%03X Output:\"%s\"\n", CNTSize, CNTOff, bs16(fe[i].ContentID), bs16(fe[i].Flags), destPath);
-
-			u32 ContFileID = bs32(tmd->Contents[bs16(fe[i].ContentID)].ID);
-
-			sprintf(sourceFile, "%08X.app", ContFileID);
-			memset(sourcePath, 0, MAXLEN);
-			strcpy(sourcePath, InputPath);
-			strcat(sourcePath, sourceFile);
-			if (!(fe[i].Type & 0x80))
+			if (argc == 3 || (argc == 4 && strcmp(relativePath, fileToDecrypt) == 0))
 			{
-				FILE* cnt = fopen(sourcePath, "rb");
-				if (cnt == NULL)
+				//memset(destPath, 0, MAXLEN);
+				strcpy(destPath, outputPath);
+				if (argc == 3)
+					strcat(destPath, relativePath);
+
+				u32 CNTSize = bs32(fe[i].FileLength);
+				u64 CNTOff = ((u64)bs32(fe[i].FileOffset));
+
+				if ((bs16(fe[i].Flags) & 4) == 0)
+					CNTOff <<= 5;
+
+				printf("Size:%07X Offset:%010llX CID:%02X U:%03X Output:\"%s\"\n", CNTSize, CNTOff, bs16(fe[i].ContentID), bs16(fe[i].Flags), destPath);
+
+				u32 ContFileID = bs32(tmd->Contents[bs16(fe[i].ContentID)].ID);
+
+				sprintf(sourceFile, "%08X.app", ContFileID);
+				//memset(sourcePath, 0, MAXLEN);
+				strcpy(sourcePath, inputPath);
+				strcat(sourcePath, sourceFile);
+				if (!(fe[i].Type & 0x80))
 				{
-					sprintf(sourceFile, "%08X", ContFileID);
-					memset(sourcePath, 0, MAXLEN);
-					strcpy(sourcePath, InputPath);
-					strcat(sourcePath, sourceFile);
-					cnt = fopen(sourcePath, "rb");
+					FILE* cnt = fopen(sourcePath, "rb");
 					if (cnt == NULL)
 					{
-						printf("Could not open: \"%s\"\n", sourcePath);
-						perror("");
-						return EXIT_FAILURE;
+						sprintf(sourceFile, "%08X", ContFileID);
+						//memset(sourcePath, 0, MAXLEN);
+						strcpy(sourcePath, inputPath);
+						strcat(sourcePath, sourceFile);
+						cnt = fopen(sourcePath, "rb");
+						if (cnt == NULL)
+						{
+							printf("Could not open: \"%s\"\n", sourcePath);
+							perror("");
+							return EXIT_FAILURE;
+						}
 					}
+					if ((bs16(fe[i].Flags) & 0x440))
+						ExtractFileHash(cnt, 0, CNTOff, bs32(fe[i].FileLength), destPath, bs16(fe[i].ContentID));
+					else
+						ExtractFile(cnt, 0, CNTOff, bs32(fe[i].FileLength), destPath, bs16(fe[i].ContentID));
+					fclose(cnt);
 				}
-				if ((bs16(fe[i].Flags) & 0x440))
-					ExtractFileHash(cnt, 0, CNTOff, bs32(fe[i].FileLength), destPath, bs16(fe[i].ContentID));
-				else
-					ExtractFile(cnt, 0, CNTOff, bs32(fe[i].FileLength), destPath, bs16(fe[i].ContentID));
-				fclose(cnt);
 			}
 		}
 	}
