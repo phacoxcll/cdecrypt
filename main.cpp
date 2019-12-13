@@ -421,7 +421,7 @@ s32 SetPaths(char* inputPath, char* outputPath)
 		return EXIT_FAILURE;
 	}
 
-	if (inPathLen + 1 > MAXLEN - 128)
+	if (outPathLen + 1 > MAXLEN - 128)
 	{
 		printf("The output path is too long.\n");
 		return EXIT_FAILURE;
