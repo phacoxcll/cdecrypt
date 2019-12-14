@@ -15,9 +15,10 @@
 
 	You should have received a copy of the GNU General Public License
 	along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
-/*
-	CDecrypt v2.1b
+
+------------------------------------------------------------------------------------
+
+  	CDecrypt v3.0b
 
 	Differences with respect to v2.0b by crediar:
 
@@ -29,22 +30,24 @@
 	- Remove the Wii U Common Keys from the code. Now need an external
 	file named "keys.txt" where the first line must be	the Wii U Common Key
 	and optionally the second line must be the Wii U Common Dev Key.
-*/
-/*
-	CDecrypt v2.2b
-
-	Differences with respect to v2.1b:
 
 	- Now lets unpack (decrypt) a specific file, requires the path to the
 	NUS Content to decrypt <input path>, the relative path with the name of
 	the file to decrypt <file to decrypt> and the path where you will place
 	the decrypted file <output filename>.
 
-	- Some performance improvements and minor changes.
+	- Replaces the character type char with the wide character type wchar_t
+	for all presentation and data collection variables, it also replaces all
+	the presentation and modification functions of strings by its equivalent
+	for the wide character type. It now supports paths with non-ASCII
+	characters.
+	
+	- Supports paths as large as the user's system allows.
+	
+	- Reorganization of code and variable names.
 */
 
 #define _CRT_SECURE_NO_WARNINGS
-
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -58,16 +61,20 @@
 #include <ctype.h>
 #include <locale.h>
 
-#pragma comment(lib,"libeay32.lib")
+#pragma comment(lib, "libeay32.lib")
 
-typedef unsigned	__int64 u64;
-typedef signed		__int64 s64;
-typedef unsigned	int u32;
-typedef signed		int s32;
-typedef unsigned	short u16;
-typedef signed		short s16;
-typedef unsigned	char u8;
-typedef signed		char s8;
+typedef unsigned __int64 u64;
+typedef signed __int64   s64;
+typedef unsigned int     u32;
+typedef signed int       s32;
+typedef unsigned short   u16;
+typedef signed short     s16;
+typedef unsigned char     u8;
+typedef signed char       s8;
+
+#define SRC_FILE_LEN 16
+#define BLOCK_SIZE_HASH 0x10000 //Data block size for extracting file by hash
+#define BLOCK_SIZE_FILE 0x8000  //Data block size for extracting file
 
 u8 WiiUCommonKeyMD5[16] =
 {
@@ -82,72 +89,68 @@ u8 WiiUCommonDevKeyMD5[16] =
 u8 WiiUCommonKey[16];
 u8 WiiUCommonDevKey[16];
 
-AES_KEY key;
-u8 enc_title_key[16];
-u8 dec_title_key[16];
-u8 title_id[16];
-u8 dkey[16];
+AES_KEY Key;
+u8 EncTitleKey[16];
+u8 DecTitleKey[16];
+u8 TitleID[16];
+u8 DKey[16];
 
 u64 H0Count = 0;
 u64 H0Fail = 0;
-
-#define MAXLEN 1024
-#define BLOCK_SIZE_HASH 0x10000 //Data block size for extracting file by hash
-#define BLOCK_SIZE_FILE 0x8000  //Data block size for extracting file
 
 #pragma pack(1)
 
 enum ContentType
 {
-	CONTENT_REQUIRED = (1 << 0),	// not sure
-	CONTENT_SHARED = (1 << 15),
+	CONTENT_REQUIRED = (1 << 0), // not sure
+	CONTENT_SHARED   = (1 << 15),
 	CONTENT_OPTIONAL = (1 << 14),
 };
 
 typedef struct
 {
-	u16 IndexOffset;	//	0	0x204
-	u16 CommandCount;	//	2	0x206
-	u8	SHA2[32];		//  12	0x208
+	u16 IndexOffset;  //  0 0x204
+	u16 CommandCount; //  2 0x206
+	u8 SHA2[32];      // 12 0x208
 } ContentInfo;
 
 typedef struct
 {
-	u32 ID;				//	0	0xB04
-	u16 Index;			//	4	0xB08
-	u16 Type;			//	6	0xB0A
-	u64 Size;			//	8	0xB0C
-	u8	SHA2[32];		//  16	0xB14
+	u32 ID;      //  0 0xB04
+	u16 Index;   //  4 0xB08
+	u16 Type;    //  6 0xB0A
+	u64 Size;    //  8 0xB0C
+	u8 SHA2[32]; // 16 0xB14
 } Content;
 
 typedef struct
 {
-	u32 SignatureType;		// 0x000
-	u8	Signature[0x100];	// 0x004
+	u32 SignatureType;   // 0x000
+	u8 Signature[0x100]; // 0x004
 
-	u8	Padding0[0x3C];		// 0x104
-	u8	Issuer[0x40];		// 0x140
+	u8 Padding0[0x3C];   // 0x104
+	u8 Issuer[0x40];     // 0x140
 
-	u8	Version;			// 0x180
-	u8	CACRLVersion;		// 0x181
-	u8	SignerCRLVersion;	// 0x182
-	u8	Padding1;			// 0x183
+	u8 Version;          // 0x180
+	u8 CACRLVersion;     // 0x181
+	u8 SignerCRLVersion; // 0x182
+	u8 Padding1;         // 0x183
 
-	u64	SystemVersion;		// 0x184
-	u64	TitleID;			// 0x18C 
-	u32	TitleType;			// 0x194 
-	u16	GroupID;			// 0x198 
-	u8	Reserved[62];		// 0x19A 
-	u32	AccessRights;		// 0x1D8
-	u16	TitleVersion;		// 0x1DC 
-	u16	ContentCount;		// 0x1DE 
-	u16 BootIndex;			// 0x1E0
-	u8	Padding3[2];		// 0x1E2 
-	u8	SHA2[32];			// 0x1E4
+	u64 SystemVersion;   // 0x184
+	u64 TitleID;         // 0x18C 
+	u32 TitleType;       // 0x194 
+	u16 GroupID;         // 0x198 
+	u8 Reserved[62];     // 0x19A 
+	u32 AccessRights;    // 0x1D8
+	u16 TitleVersion;    // 0x1DC 
+	u16 ContentCount;    // 0x1DE 
+	u16 BootIndex;       // 0x1E0
+	u8 Padding3[2];      // 0x1E2 
+	u8 SHA2[32];         // 0x1E4
 
 	ContentInfo ContentInfos[64];
 
-	Content Contents[];		// 0x1E4 
+	Content Contents[];  // 0x1E4 
 
 } TitleMetaData;
 
@@ -183,12 +186,12 @@ struct FEntry
 	};
 	union
 	{
-		struct		// File Entry
+		struct // File Entry
 		{
 			u32 FileOffset;
 			u32 FileLength;
 		};
-		struct		// Dir Entry
+		struct // Dir Entry
 		{
 			u32 ParentOffset;
 			u32 NextOffset;
@@ -215,9 +218,9 @@ u64 bs64(u64 i)
 }
 
 
-char* ReadFile(const char* Name, u32* Length)
+u8* ReadFile(const wchar_t* name, u32* length)
 {
-	FILE* in = fopen(Name, "rb");
+	FILE* in = _wfopen(name, L"rb");
 	if (in == NULL)
 	{
 		//perror("");
@@ -225,34 +228,34 @@ char* ReadFile(const char* Name, u32* Length)
 	}
 
 	fseek(in, 0, SEEK_END);
-	*Length = ftell(in);
+	*length = ftell(in);
 
 	fseek(in, 0, 0);
 
-	char* Data = new char[*Length];
+	u8* Data = new u8[*length];
 
-	u32 read = fread(Data, 1, *Length, in);
+	u32 read = fread(Data, 1, *length, in);
 
 	fclose(in);
 
 	return Data;
 }
 
-void FileDump(const char* Name, void* Data, u32 Length)
+void FileDump(const wchar_t* name, void* data, u32 length)
 {
-	if (Data == NULL)
+	if (data == NULL)
 	{
-		printf("zero ptr");
+		wprintf(L"zero ptr");
 		return;
 	}
 
-	if (Length == 0)
+	if (length == 0)
 	{
-		printf("zero sz");
+		wprintf(L"zero sz");
 		return;
 	}
 
-	FILE* Out = fopen(Name, "wb");
+	FILE* Out = _wfopen(name, L"wb");
 
 	if (Out == NULL)
 	{
@@ -260,7 +263,7 @@ void FileDump(const char* Name, void* Data, u32 Length)
 		return;
 	}
 
-	if (fwrite(Data, 1, Length, Out) != Length)
+	if (fwrite(data, 1, length, Out) != length)
 	{
 		perror("");
 	}
@@ -283,18 +286,18 @@ void PrintHexDump(void* d, s32 len)
 	data = (u8*)d;
 	for (off = 0; off < len; off += 16)
 	{
-		printf("%08x  ", off);
+		wprintf(L"%08x  ", off);
 		for (i = 0; i < 16; i++)
 			if ((i + off) >= len)
-				printf("   ");
+				wprintf(L"   ");
 			else
-				printf("%02x ", data[off + i]);
+				wprintf(L"%02x ", data[off + i]);
 
-		printf(" ");
+		wprintf(L" ");
 		for (i = 0; i < 16; i++)
 			if ((i + off) >= len) printf(" ");
-			else printf("%c", ToASCII(data[off + i]));
-		printf("\n");
+			else wprintf(L"%hc", ToASCII(data[off + i]));
+		wprintf(L"\n");
 	}
 }
 
@@ -321,30 +324,30 @@ void ToByteArray(const char* str, u8* out)
 
 void PrintKeysFileHelp()
 {
-	printf("Create a file named \"keys.txt\" next to the executable, open it with the notepad and place the Wii U Common Key on the first line, optionally you can place a second line with the Wii U Common Dev Key.\n");
+	wprintf(L"Create a file named \"keys.txt\" next to the executable, open it with the notepad and place the Wii U Common Key on the first line, optionally you can place a second line with the Wii U Common Dev Key.\n");
 }
 
 s32 LoadWiiUCommonKeys()
 {
 	u32 keysLen;
-	char* keys = ReadFile("keys.txt", &keysLen);
+	u8* keys = ReadFile(L"keys.txt", &keysLen);
 
 	if (keys == nullptr)
 	{
-		printf("The \"keys.txt\" file not exist or could not be read.\n");
+		wprintf(L"The \"keys.txt\" file not exist or could not be read.\n");
 		PrintKeysFileHelp();
 		return EXIT_FAILURE;
 	}
 
 	if (keysLen < 32)
 	{
-		printf("The \"keys.txt\" file is too small to contain one key.\n");
+		wprintf(L"The \"keys.txt\" file is too small to contain one key.\n");
 		return EXIT_FAILURE;
 	}
 
 	if (keysLen > 68)
 	{
-		printf("The \"keys.txt\" file is unnecessarily large.\n");
+		wprintf(L"The \"keys.txt\" file is unnecessarily large.\n");
 		return EXIT_FAILURE;
 	}
 
@@ -366,13 +369,13 @@ s32 LoadWiiUCommonKeys()
 		{
 			if (digest[i] != WiiUCommonKeyMD5[i])
 			{
-				printf("Invalid Wii U Common Key: \"%s\"\n", wKey);
+				wprintf(L"Invalid Wii U Common Key: \"%hs\"\n", wKey);
 				return EXIT_FAILURE;
 			}
 		}
 
 		ToByteArray(wKey, WiiUCommonKey);
-		printf("Wii U Common Key found.\n");
+		wprintf(L"Wii U Common Key found.\n");
 	}
 
 	if (keysLen >= 64)
@@ -401,18 +404,18 @@ s32 LoadWiiUCommonKeys()
 		{
 			if (digest[i] != WiiUCommonDevKeyMD5[i])
 			{
-				printf("Invalid Wii U Common Dev Key: \"%s\"\n", wDevKey);
+				wprintf(L"Invalid Wii U Common Dev Key: \"%hs\"\n", wDevKey);
 				return EXIT_FAILURE;
 			}
 		}
 
 		ToByteArray(wDevKey, WiiUCommonDevKey);
-		printf("Wii U Common Dev Key found.\n");
+		wprintf(L"Wii U Common Dev Key found.\n");
 	}
 	else
 	{
 		memset(WiiUCommonDevKey, 0, 16);
-		printf("Wii U Common Dev Key not found.\n");
+		wprintf(L"Wii U Common Dev Key not found.\n");
 	}
 
 	delete[] keys;
@@ -420,108 +423,93 @@ s32 LoadWiiUCommonKeys()
 	return EXIT_SUCCESS;
 }
 
-s32 SetValidPath(const char* path, char* validPath)
+wchar_t* Adjust(wchar_t*& str, s32* currentStrMaxLength, s32 sizeToFit)
 {
-	u16 pathLen = strlen(path);
-
-	if (pathLen + 1 > MAXLEN - 128)
+	if (sizeToFit > *currentStrMaxLength)
 	{
-		printf("The \"%s\" path is too long.\n", path);
-		return EXIT_FAILURE;
+		wchar_t* newPtr;
+		*currentStrMaxLength = (sizeToFit / 64 + 1) * 64;
+		newPtr = new wchar_t[*currentStrMaxLength];
+		wmemset(newPtr, 0, *currentStrMaxLength);
+		wcscpy(newPtr, str);
+		delete[] str;
+		str = nullptr;
+		return newPtr;
 	}
-
-	struct stat info;
-	if (stat(path, &info) != 0 || (info.st_mode & S_IFDIR) != S_IFDIR)
-	{
-		printf("The \"%s\" path not exist.\n", path);
-		return EXIT_FAILURE;
-	}
-
-	if (path[pathLen - 1] == '\\')
-	{
-		strcpy(validPath, path);
-	}
-	else
-	{
-		strcpy(validPath, path);
-		strcat(validPath, "\\");
-	}
-
-	return EXIT_SUCCESS;
+	return str;
 }
 
 
-void ExtractFileHash(FILE* in, u64 PartDataOffset, u64 FileOffset, u64 Size, char* FileName, u16 ContentID)
+void ExtractFileHash(FILE* in, u64 partDataOffset, u64 fileOffset, u64 size, wchar_t* fileName, u16 contentID)
 {
 	char* encdata = new char[BLOCK_SIZE_HASH];
 	char* decdata = new char[BLOCK_SIZE_HASH];
-	u8 IV[16];
+	u8 iv[16];
 	u8 hash[SHA_DIGEST_LENGTH];
-	u8 H0[SHA_DIGEST_LENGTH];
-	u8 Hashes[0x400];
+	u8 h0[SHA_DIGEST_LENGTH];
+	u8 hashes[0x400];
 
-	u64 Wrote = 0;
-	u64 WriteSize = 0xFC00;	// Hash block size
-	u64 Block = (FileOffset / 0xFC00) & 0xF;
+	u64 wrote = 0;
+	u64 writeSize = 0xFC00;	// Hash block size
+	u64 block = (fileOffset / 0xFC00) & 0xF;
 
-	FILE* out = fopen(FileName, "wb");
+	FILE* out = _wfopen(fileName, L"wb");
 	if (out == NULL)
 	{
-		printf("Could not create \"%s\"\n", FileName);
+		wprintf(L"Could not create \"%ls\"\n", fileName);
 		perror("");
 		exit(0);
 	}
 
-	u64 roffset = FileOffset / 0xFC00 * BLOCK_SIZE_HASH;
-	u64 soffset = FileOffset - (FileOffset / 0xFC00 * 0xFC00);
+	u64 roffset = fileOffset / 0xFC00 * BLOCK_SIZE_HASH;
+	u64 soffset = fileOffset - (fileOffset / 0xFC00 * 0xFC00);
 
-	if (soffset + Size > WriteSize)
-		WriteSize = WriteSize - soffset;
+	if (soffset + size > writeSize)
+		writeSize = writeSize - soffset;
 
-	_fseeki64(in, PartDataOffset + roffset, SEEK_SET);
-	while (Size > 0)
+	_fseeki64(in, partDataOffset + roffset, SEEK_SET);
+	while (size > 0)
 	{
-		if (WriteSize > Size)
-			WriteSize = Size;
+		if (writeSize > size)
+			writeSize = size;
 
 		fread(encdata, sizeof(char), BLOCK_SIZE_HASH, in);
 
-		memset(IV, 0, sizeof(IV));
-		IV[1] = (u8)ContentID;
-		AES_cbc_encrypt((const u8*)(encdata), (u8*)Hashes, 0x400, &key, IV, AES_DECRYPT);
+		memset(iv, 0, sizeof(iv));
+		iv[1] = (u8)contentID;
+		AES_cbc_encrypt((const u8*)(encdata), (u8*)hashes, 0x400, &Key, iv, AES_DECRYPT);
 
-		memcpy(H0, Hashes + 0x14 * Block, SHA_DIGEST_LENGTH);
-
-		memcpy(IV, Hashes + 0x14 * Block, sizeof(IV));
-		if (Block == 0)
-			IV[1] ^= ContentID;
-		AES_cbc_encrypt((const u8*)(encdata + 0x400), (u8*)decdata, 0xFC00, &key, IV, AES_DECRYPT);
+		memcpy(h0, hashes + 0x14 * block, SHA_DIGEST_LENGTH);
+		memcpy(iv, hashes + 0x14 * block, sizeof(iv));
+		if (block == 0)
+			iv[1] ^= contentID;
+		AES_cbc_encrypt((const u8*)(encdata + 0x400), (u8*)decdata, 0xFC00, &Key, iv, AES_DECRYPT);
 
 		SHA1((const u8*)decdata, 0xFC00, hash);
-		if (Block == 0)
-			hash[1] ^= ContentID;
+		if (block == 0)
+			hash[1] ^= contentID;
 		H0Count++;
-		if (memcmp(hash, H0, SHA_DIGEST_LENGTH) != 0)
+		if (memcmp(hash, h0, SHA_DIGEST_LENGTH) != 0)
 		{
 			H0Fail++;
 			PrintHexDump(hash, SHA_DIGEST_LENGTH);
-			PrintHexDump(Hashes, 0x100);
+			PrintHexDump(hashes, 0x100);
 			PrintHexDump(decdata, 0x100);
-			printf("Failed to verify H0 hash\n");
+			wprintf(L"Failed to verify H0 hash\n");
 			exit(0);
 		}
 
-		Size -= fwrite(decdata + soffset, sizeof(char), WriteSize, out);
+		size -= fwrite(decdata + soffset, sizeof(char), writeSize, out);
 
-		Wrote += WriteSize;
+		wrote += writeSize;
 
-		Block++;
-		if (Block >= 16)
-			Block = 0;
+		block++;
+		if (block >= 16)
+			block = 0;
 
 		if (soffset)
 		{
-			WriteSize = 0xFC00;
+			writeSize = 0xFC00;
 			soffset = 0;
 		}
 	}
@@ -531,54 +519,53 @@ void ExtractFileHash(FILE* in, u64 PartDataOffset, u64 FileOffset, u64 Size, cha
 	delete[] decdata;
 }
 
-void ExtractFile(FILE* in, u64 PartDataOffset, u64 FileOffset, u64 Size, char* FileName, u16 ContentID)
+void ExtractFile(FILE* in, u64 partDataOffset, u64 fileOffset, u64 size, wchar_t* fileName, u16 contentID)
 {
 	char* encdata = new char[BLOCK_SIZE_FILE];
 	char* decdata = new char[BLOCK_SIZE_FILE];
-	u64 Wrote = 0;
-	u64 Block = (FileOffset / BLOCK_SIZE_FILE) & 0xF;
+	u64 wrote = 0;
+	//u64 block = (fileOffset / BLOCK_SIZE_FILE) & 0xF;
 
-	//printf("PO:%08llX FO:%08llX FS:%llu\n", PartDataOffset, FileOffset, Size );
+	//wprintf(L"PO:%08llX FO:%08llX FS:%llu\n", partDataOffset, fileOffset, size );
 
 	//calc real offset
-	u64 roffset = FileOffset / BLOCK_SIZE_FILE * BLOCK_SIZE_FILE;
-	u64 soffset = FileOffset - (FileOffset / BLOCK_SIZE_FILE * BLOCK_SIZE_FILE);
-	//printf("Extracting:\"%s\" RealOffset:%08llX RealOffset:%08llX\n", FileName, roffset, soffset );
+	u64 roffset = fileOffset / BLOCK_SIZE_FILE * BLOCK_SIZE_FILE;
+	u64 soffset = fileOffset - (fileOffset / BLOCK_SIZE_FILE * BLOCK_SIZE_FILE);
+	//wprintf(L"Extracting:\"%ls\" RealOffset:%08llX RealOffset:%08llX\n", fileName, roffset, soffset );
 
-	FILE* out = fopen(FileName, "wb");
+	FILE* out = _wfopen(fileName, L"wb");
 	if (out == NULL)
 	{
-		printf("Could not create \"%s\"\n", FileName);
+		wprintf(L"Could not create \"%ls\"\n", fileName);
 		perror("");
 		exit(0);
 	}
-	u8 IV[16];
-	memset(IV, 0, sizeof(IV));
-	IV[1] = (u8)ContentID;
 
-	u64 WriteSize = BLOCK_SIZE_FILE;
+	u8 iv[16];
+	memset(iv, 0, sizeof(iv));
+	iv[1] = (u8)contentID;
 
-	if (soffset + Size > WriteSize)
-		WriteSize = WriteSize - soffset;
+	u64 writeSize = BLOCK_SIZE_FILE;
 
-	_fseeki64(in, PartDataOffset + roffset, SEEK_SET);
+	if (soffset + size > writeSize)
+		writeSize = writeSize - soffset;
 
-	while (Size > 0)
+	_fseeki64(in, partDataOffset + roffset, SEEK_SET);
+
+	while (size > 0)
 	{
-		if (WriteSize > Size)
-			WriteSize = Size;
+		if (writeSize > size)
+			writeSize = size;
 
 		fread(encdata, sizeof(char), BLOCK_SIZE_FILE, in);
+		AES_cbc_encrypt((const u8*)(encdata), (u8*)decdata, BLOCK_SIZE_FILE, &Key, iv, AES_DECRYPT);
+		size -= fwrite(decdata + soffset, sizeof(char), writeSize, out);
 
-		AES_cbc_encrypt((const u8*)(encdata), (u8*)decdata, BLOCK_SIZE_FILE, &key, IV, AES_DECRYPT);
-
-		Size -= fwrite(decdata + soffset, sizeof(char), WriteSize, out);
-
-		Wrote += WriteSize;
+		wrote += writeSize;
 
 		if (soffset)
 		{
-			WriteSize = BLOCK_SIZE_FILE;
+			writeSize = BLOCK_SIZE_FILE;
 			soffset = 0;
 		}
 	}
@@ -589,10 +576,10 @@ void ExtractFile(FILE* in, u64 PartDataOffset, u64 FileOffset, u64 Size, char* F
 }
 
 
-s32 main(s32 argc, char* argv[])
+s32 wmain(s32 argc, wchar_t* argv[])
 {
-	printf("CDecrypt v2.2b by crediar, phacox.cll\n");
-	printf("Built: %s %s\n", __TIME__, __DATE__);
+	wprintf(L"CDecrypt v3.0 by crediar, phacox.cll\n");
+	wprintf(L"Built: %hs %hs\n", __TIME__, __DATE__);
 
 	if (argc != 3 && argc != 4)
 	{
@@ -604,120 +591,134 @@ s32 main(s32 argc, char* argv[])
 	if (LoadWiiUCommonKeys())
 		return EXIT_FAILURE;
 
-	char inputPath[MAXLEN];
-	char outputPath[MAXLEN];
-	char fileToDecrypt[MAXLEN];
+	wchar_t* inputPath;
+	wchar_t* outputPath;
+	wchar_t* fileToDecrypt;
 
-	if (SetValidPath(argv[1], inputPath))
+	struct _stat info;
+	if (_wstat(argv[1], &info) != 0 || (info.st_mode & S_IFDIR) != S_IFDIR)
+	{
+		wprintf(L"The \"%ls\" path not exist.\n", argv[1]);
 		return EXIT_FAILURE;
+	}
+
+	s32 inputLen = wcslen(argv[1]) + (argv[1][wcslen(argv[1]) - 1] != L'\\' ? 1 : 0);
+	inputPath = new wchar_t[inputLen + 1];
+	wcscpy(inputPath, argv[1]);
+	if (argv[1][wcslen(argv[1]) - 1] != L'\\')
+		wcscat(inputPath, L"\\");
 
 	if (argc == 3)
 	{
-		if (SetValidPath(argv[2], outputPath))
+		if (_wstat(argv[2], &info) != 0 || (info.st_mode & S_IFDIR) != S_IFDIR)
+		{
+			wprintf(L"The \"%ls\" path not exist.\n", argv[2]);
 			return EXIT_FAILURE;
-		fileToDecrypt[0] = 0;
+		}
+
+		s32 outputLen = wcslen(argv[2]) + (argv[2][wcslen(argv[2]) - 1] != L'\\' ? 1 : 0);
+		outputPath = new wchar_t[outputLen + 1];
+		wcscpy(outputPath, argv[2]);
+		if (argv[2][wcslen(argv[2]) - 1] != L'\\')
+			wcscat(outputPath, L"\\");
+
+		fileToDecrypt = new wchar_t[1];
+		fileToDecrypt[0] = L'\0';
 	}
 	else //if (argc == 4)
 	{
-		if (strlen(argv[2]) > MAXLEN)
-		{
-			printf("The string \"%s\" is too long.\n", argv[2]);
-			return EXIT_FAILURE;
-		}
-		strcpy(fileToDecrypt, argv[2]);
+		outputPath = new wchar_t[wcslen(argv[3]) + 1];
+		wcscpy(outputPath, argv[3]);
 
-		if (strlen(argv[3]) > MAXLEN)
-		{
-			printf("The \"%s\" path is too long.\n", argv[3]);
-			return EXIT_FAILURE;
-		}
-		strcpy(outputPath, argv[3]);
+		fileToDecrypt = new wchar_t[wcslen(argv[2]) + 1];
+		wcscpy(fileToDecrypt, argv[2]);
 	}
 
-	char tmdPath[MAXLEN];
-	strcpy(tmdPath, inputPath);
-	strcat(tmdPath, "title.tmd");
+	wchar_t* tmdPath = new wchar_t[inputLen + SRC_FILE_LEN];
+	wcscpy(tmdPath, inputPath);
+	wcscat(tmdPath, L"title.tmd");
 	u32 TMDLen;
-	char* TMD = ReadFile(tmdPath, &TMDLen);
+	u8* TMD = ReadFile(tmdPath, &TMDLen);
 	if (TMD == nullptr)
 	{
-		printf("Failed to open \"%s\"\n", tmdPath);
+		wprintf(L"Failed to open \"%ls\"\n", tmdPath);
 		return EXIT_FAILURE;
 	}
+	delete[] tmdPath;
 
-	char tikPath[MAXLEN];
-	strcpy(tikPath, inputPath);
-	strcat(tikPath, "title.tik");
+	wchar_t* tikPath = new wchar_t[inputLen + SRC_FILE_LEN];
+	wcscpy(tikPath, inputPath);
+	wcscat(tikPath, L"title.tik");
 	u32 TIKLen;
-	char* TIK = ReadFile(tikPath, &TIKLen);
+	u8* TIK = ReadFile(tikPath, &TIKLen);
 	if (TIK == nullptr)
 	{
-		printf("Failed to open \"%s\"\n", tikPath);
+		wprintf(L"Failed to open \"%ls\"\n", tikPath);
 		return EXIT_FAILURE;
 	}
+	delete[] tikPath;
 
 	TitleMetaData* tmd = (TitleMetaData*)TMD;
 
 	if (tmd->Version != 1)
 	{
-		printf("Unsupported TMD Version: %u\n", tmd->Version);
+		wprintf(L"Unsupported TMD Version: %u\n", tmd->Version);
 		return EXIT_FAILURE;
 	}
 
-	printf("Title version: %u\n", bs16(tmd->TitleVersion));
-	printf("Content Count: %u\n", bs16(tmd->ContentCount));
+	wprintf(L"Title version: %u\n", bs16(tmd->TitleVersion));
+	wprintf(L"Content Count: %u\n", bs16(tmd->ContentCount));
 
-	if (strcmp(TMD + 0x140, "Root-CA00000003-CP0000000b") == 0)
+	if (strcmp((char*)TMD + 0x140, "Root-CA00000003-CP0000000b") == 0)
 	{
-		AES_set_decrypt_key((const u8*)WiiUCommonKey, sizeof(WiiUCommonKey) * 8, &key);
+		AES_set_decrypt_key((const u8*)WiiUCommonKey, sizeof(WiiUCommonKey) * 8, &Key);
 	}
-	else if (strcmp(TMD + 0x140, "Root-CA00000004-CP00000010") == 0)
+	else if (strcmp((char*)TMD + 0x140, "Root-CA00000004-CP00000010") == 0)
 	{
 		if (WiiUCommonDevKey[0] == 0)
 		{
-			printf("To decrypt this NUS Content the Wii U Common Dev Key is required.\n");
+			wprintf(L"To decrypt this NUS Content the Wii U Common Dev Key is required.\n");
 			PrintKeysFileHelp();
 			return EXIT_SUCCESS;
 		}
 		else
-			AES_set_decrypt_key((const u8*)WiiUCommonDevKey, sizeof(WiiUCommonDevKey) * 8, &key);
+			AES_set_decrypt_key((const u8*)WiiUCommonDevKey, sizeof(WiiUCommonDevKey) * 8, &Key);
 	}
 	else
 	{
-		printf("Unknown Root type: \"%s\"\n", TMD + 0x140);
+		wprintf(L"Unknown Root type: \"%hs\"\n", TMD + 0x140);
 		return EXIT_FAILURE;
 	}
 
-	memset(title_id, 0, sizeof(title_id));
+	memset(TitleID, 0, sizeof(TitleID));
 
-	memcpy(title_id, TMD + 0x18C, 8);
-	memcpy(enc_title_key, TIK + 0x1BF, 16);
+	memcpy(TitleID, TMD + 0x18C, 8);
+	memcpy(EncTitleKey, TIK + 0x1BF, 16);
 	delete[] TIK;
 
-	AES_cbc_encrypt(enc_title_key, dec_title_key, sizeof(dec_title_key), &key, title_id, AES_DECRYPT);
-	AES_set_decrypt_key(dec_title_key, sizeof(dec_title_key) * 8, &key);
+	AES_cbc_encrypt(EncTitleKey, DecTitleKey, sizeof(DecTitleKey), &Key, TitleID, AES_DECRYPT);
+	AES_set_decrypt_key(DecTitleKey, sizeof(DecTitleKey) * 8, &Key);
 
 	char iv[16];
 	memset(iv, 0, sizeof(iv));
 
-	char sourcePath[MAXLEN];
-	char sourceFile[MAXLEN];
-	sprintf(sourceFile, "%08X.app", bs32(tmd->Contents[0].ID));
-	strcpy(sourcePath, inputPath);
-	strcat(sourcePath, sourceFile);
+	wchar_t* sourcePath = new wchar_t[inputLen + SRC_FILE_LEN];
+	wchar_t sourceFile[SRC_FILE_LEN];
+	swprintf(sourceFile, SRC_FILE_LEN, L"%08X.app", bs32(tmd->Contents[0].ID));
+	wcscpy(sourcePath, inputPath);
+	wcscat(sourcePath, sourceFile);
 
 	u32 CNTLen;
-	char* CNT = ReadFile(sourcePath, &CNTLen);
-	if (CNT == (char*)NULL)
+	u8* CNT = ReadFile(sourcePath, &CNTLen);
+	if (CNT == (u8*)NULL)
 	{
-		sprintf(sourceFile, "%08X", bs32(tmd->Contents[0].ID));
-		//memset(sourcePath, 0, MAXLEN);
-		strcpy(sourcePath, inputPath);
-		strcat(sourcePath, sourceFile);
+		swprintf(sourceFile, SRC_FILE_LEN, L"%08X", bs32(tmd->Contents[0].ID));
+		wcscpy(sourcePath, inputPath);
+		wcscat(sourcePath, sourceFile);
 		CNT = ReadFile(sourcePath, &CNTLen);
-		if (CNT == (char*)NULL)
+		if (CNT == (u8*)NULL)
 		{
-			printf("Failed to open content: %08X\n", bs32(tmd->Contents[0].ID));
+			wprintf(L"Failed to open content: %08X\n", bs32(tmd->Contents[0].ID));
 			return EXIT_FAILURE;
 		}
 	}
@@ -728,19 +729,19 @@ s32 main(s32 argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
-	AES_cbc_encrypt((const u8*)(CNT), (u8*)(CNT), CNTLen, &key, (u8*)(iv), AES_DECRYPT);
+	AES_cbc_encrypt((const u8*)(CNT), (u8*)(CNT), CNTLen, &Key, (u8*)(iv), AES_DECRYPT);
 
 	if (bs32(*(u32*)CNT) != 0x46535400)
 	{
-		sprintf(sourceFile, "%08X.bin", bs32(tmd->Contents[0].ID));
+		swprintf(sourceFile, SRC_FILE_LEN, L"%08X.bin", bs32(tmd->Contents[0].ID));
 		FileDump(sourceFile, CNT, CNTLen);
-		printf("Fail. File dumped: %s\n", sourceFile);
+		wprintf(L"Fail. File dumped: %ls\n", sourceFile);
 		return EXIT_FAILURE;
 	}
 
 	FST* _fst = (FST*)(CNT);
 
-	printf("FSTInfo Entries: %u\n", bs32(_fst->EntryCount));
+	wprintf(L"FSTInfo Entries: %u\n", bs32(_fst->EntryCount));
 	if (bs32(_fst->EntryCount) > 90000)
 		return EXIT_FAILURE;
 
@@ -750,13 +751,17 @@ s32 main(s32 argc, char* argv[])
 	u32 NameOff = 0x20 + bs32(_fst->EntryCount) * 0x20 + Entries * 0x10;
 	u32 DirEntries = 0;
 
-	printf("FST entries: %u\n", Entries);
+	wprintf(L"FST entries: %u\n", Entries);
 
-	char relativePath[MAXLEN];
-	char destPath[MAXLEN];
 	s32 Entry[16];
 	s32 LEntry[16];
 	s32 level = 0;
+	s32 cntNameLen = 0;
+	s32 relativePathLen = 128;
+	s32 destPathLen = 128;
+	char* cntName;
+	wchar_t* relativePath = new wchar_t[relativePathLen];
+	wchar_t* destPath = new wchar_t[destPathLen];
 	for (u32 i = 1; i < Entries; ++i)
 	{
 		if (level)
@@ -774,37 +779,50 @@ s32 main(s32 argc, char* argv[])
 			LEntry[level++] = bs32(fe[i].NextOffset);
 			if (level > 15)	// something is wrong!
 			{
-				printf("level error: %u\n", level);
+				wprintf(L"level error: %u\n", level);
 				break;
 			}
 		}
 		else
 		{
-			memset(relativePath, 0, MAXLEN);
+			wmemset(relativePath, 0, relativePathLen);
 
 			for (s32 j = 0; j < level; ++j)
 			{
+				cntName = (char*)CNT + NameOff + bs24(fe[Entry[j]].NameOffset);
+				cntNameLen = strlen((char*)CNT + NameOff + bs24(fe[Entry[j]].NameOffset));
+				relativePath = Adjust(relativePath, &relativePathLen, wcslen(relativePath) + cntNameLen + 2);
 				if (j)
-					relativePath[strlen(relativePath)] = '\\';
-				memcpy(relativePath + strlen(relativePath), CNT + NameOff + bs24(fe[Entry[j]].NameOffset), strlen(CNT + NameOff + bs24(fe[Entry[j]].NameOffset)));
+					relativePath[wcslen(relativePath)] = L'\\';				
+				mbstowcs(relativePath + wcslen(relativePath), cntName, cntNameLen);
 				if (argc == 3)
 				{
-					//memset(destPath, 0, MAXLEN);
-					strcpy(destPath, outputPath);
-					strcat(destPath, relativePath);
-					_mkdir(destPath);
+					destPath = Adjust(destPath, &destPathLen, wcslen(outputPath) + wcslen(relativePath) + 1);
+					wcscpy(destPath, outputPath);
+					wcscat(destPath, relativePath);
+					s32 a = _wmkdir(destPath);
 				}
-			}
+			}			
+			cntName = (char*)CNT + NameOff + bs24(fe[i].NameOffset);
+			cntNameLen = strlen((char*)CNT + NameOff + bs24(fe[i].NameOffset));
+			relativePath = Adjust(relativePath, &relativePathLen, wcslen(relativePath) + cntNameLen + 2);
 			if (level)
-				relativePath[strlen(relativePath)] = '\\';
-			memcpy(relativePath + strlen(relativePath), CNT + NameOff + bs24(fe[i].NameOffset), strlen(CNT + NameOff + bs24(fe[i].NameOffset)));
+				relativePath[wcslen(relativePath)] = L'\\';			
+			mbstowcs(relativePath + wcslen(relativePath), cntName, cntNameLen);
 
-			if (argc == 3 || (argc == 4 && strcmp(relativePath, fileToDecrypt) == 0))
+			if (argc == 3 || (argc == 4 && wcscmp(relativePath, fileToDecrypt) == 0))
 			{
-				//memset(destPath, 0, MAXLEN);
-				strcpy(destPath, outputPath);
 				if (argc == 3)
-					strcat(destPath, relativePath);
+				{
+					destPath = Adjust(destPath, &destPathLen, wcslen(outputPath) + wcslen(relativePath) + 1);
+					wcscpy(destPath, outputPath);
+					wcscat(destPath, relativePath);
+				}
+				else //if (argc == 4)
+				{
+					destPath = Adjust(destPath, &destPathLen, wcslen(outputPath) + 1);
+					wcscpy(destPath, outputPath);
+				}
 
 				u32 CNTSize = bs32(fe[i].FileLength);
 				u64 CNTOff = ((u64)bs32(fe[i].FileOffset));
@@ -812,27 +830,26 @@ s32 main(s32 argc, char* argv[])
 				if ((bs16(fe[i].Flags) & 4) == 0)
 					CNTOff <<= 5;
 
-				printf("Size:%07X Offset:%010llX CID:%02X U:%03X Output:\"%s\"\n", CNTSize, CNTOff, bs16(fe[i].ContentID), bs16(fe[i].Flags), destPath);
+				wprintf(L"Size:%07X Offset:%010llX CID:%02X U:%03X Output:\"%ls\"\n",
+					CNTSize, CNTOff, bs16(fe[i].ContentID), bs16(fe[i].Flags), destPath);
 
 				u32 ContFileID = bs32(tmd->Contents[bs16(fe[i].ContentID)].ID);
 
-				sprintf(sourceFile, "%08X.app", ContFileID);
-				//memset(sourcePath, 0, MAXLEN);
-				strcpy(sourcePath, inputPath);
-				strcat(sourcePath, sourceFile);
+				swprintf(sourceFile, SRC_FILE_LEN, L"%08X.app", ContFileID);
+				wcscpy(sourcePath, inputPath);
+				wcscat(sourcePath, sourceFile);
 				if (!(fe[i].Type & 0x80))
 				{
-					FILE* cnt = fopen(sourcePath, "rb");
+					FILE* cnt = _wfopen(sourcePath, L"rb");
 					if (cnt == NULL)
 					{
-						sprintf(sourceFile, "%08X", ContFileID);
-						//memset(sourcePath, 0, MAXLEN);
-						strcpy(sourcePath, inputPath);
-						strcat(sourcePath, sourceFile);
-						cnt = fopen(sourcePath, "rb");
+						swprintf(sourceFile, SRC_FILE_LEN, L"%08X", ContFileID);
+						wcscpy(sourcePath, inputPath);
+						wcscat(sourcePath, sourceFile);
+						cnt = _wfopen(sourcePath, L"rb");
 						if (cnt == NULL)
 						{
-							printf("Could not open: \"%s\"\n", sourcePath);
+							wprintf(L"Could not open: \"%ls\"\n", sourcePath);
 							perror("");
 							return EXIT_FAILURE;
 						}
