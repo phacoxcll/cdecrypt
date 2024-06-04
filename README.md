@@ -1,17 +1,36 @@
-# CDecrypt v3.0
+# CDecrypt
 
-Small application that allows unpack (decrypt) Wii U NUS Content.
+### Description
 
-This is a fork of a fork made by neobrain of the abandoned CDecrypt originally made by Crediar.
+A utility that decrypts Wii U NUS content files.
 
-Internally it works almost the same as version 2.0b but it differs in these aspects:
+### Details
 
-- Remove the Wii U Common Keys from the code. Now need an external file named "keys.txt" where the first line must be the Wii U Common Key and optionally the second line must be the Wii U Common Dev Key.
+This is a fork of a fork made by [VitaSmith](https://github.com/VitaSmith/cdecrypt) of the CDecrypt originally made by [Crediar](https://code.google.com/archive/p/cdecrypt/) intended for modders who want to explore or modify the content of the Wii U applications they own.
 
-- Change the command line entry. Now instead of requiring the paths to the files "title.tmd" and "title.tik", requires the path to the NUS Content to decrypt <input path> and the path where you will place the decrypted content <output path>.
-  
-- Now lets unpack (decrypt) a specific file, requires the path to the NUS Content to decrypt <input path>, the relative path with the name of the file to decrypt <file to decrypt> and the path where you will place the decrypted file <output filename>.
-  
-- Supports paths with non-ASCII characters.
+Unlike other clones, this version of cdecrypt has **no** external dependencies such as OpenSSL libraries and whatnot: A single executable file is all you need.
+It also supports international characters, does not need to reside in the same directory as the NUS content, and can be compiled for Linux or macOS.
 
-- Supports paths as large as the user's system allows.
+### Usage
+
+You can use a `keys.txt` file so you don't have to enter the common key every time.
+
+```
+cdecrypt [common key] <TMD or TIK file> <TMD or TIK file>
+```
+
+If an existing file is provided as the second parameter, it is ignored (to preserve compatibility with the previous versions of CDecrypt).
+
+```
+cdecrypt [common key] <TMD or TIK file|input directory> [output directory]
+```
+
+If only one parameter is specified, the content is extracted into the same directory where the NUS files reside. If the second parameter is not an existing file, then it is used as the target directory to extract files in, with any intermediate directories created if needed.
+
+Note that on Windows, you can drag and drop a directory/file directly onto `cdecrypt.exe`.
+
+```
+cdecrypt [common key] <TMD or TIK file|input directory> <file to decrypt> <output filename>
+```
+
+If three parameters are specified, an attempt is made to extract only the file specified by the second parameter, the file name specified by the third parameter is used as the destination. For example: `cdecrypt "NUS files" meta\iconTex.tga icon.tga`
